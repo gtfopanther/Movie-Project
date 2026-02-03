@@ -1,6 +1,6 @@
-# movies.py
+# main.py
 """
-movies.py - CLI movie database application.
+main.py - CLI movie database application.
 
 Robustness requirements:
 - No empty movie titles.
@@ -17,6 +17,7 @@ from typing import Optional
 
 from storage import movie_storage_sql as movie_storage
 from storage.movie_storage_sql import MovieData
+
 import movie_api
 import website_generator
 
@@ -53,8 +54,8 @@ def print_menu() -> None:
   print("7. Film suchen")
   print("8. Filme sortieren nach rating")
   print("9. Generate website")
-  print("10. rating histogram")
-
+  print("10. Switch user")
+  print("11. rating histogram")
 
 
 def ask_non_empty(prompt: str) -> str:
@@ -95,17 +96,50 @@ def ask_choice(prompt: str, valid_choices: set[str]) -> str:
     print("Ungültige Auswahl. Bitte nochmal.")
 
 
-def list_movies() -> None:
-  """List all movies."""
-  movies = movie_storage.get_movies()
+def select_or_create_user() -> tuple[int, str]:
+  """Let the user select an existing profile or create a new one."""
+  while True:
+    users = movie_storage.list_users()
+    print("Select a user:")
+    for idx, (_, name) in enumerate(users, start=1):
+      print(f"{idx}. {name}")
+    print(f"{len(users) + 1}. Create new user")
+
+    choice = ask_int("Enter choice: ")
+
+    if 1 <= choice <= len(users):
+      user_id, name = users[choice - 1]
+      print(f"Welcome back, {name}! 🎬")
+      return user_id, name
+
+    if choice == len(users) + 1:
+      new_name = ask_non_empty("New user name: ")
+      try:
+        user_id = movie_storage.create_user(new_name)
+      except ValueError:
+        print("User existiert bereits. Bitte anderen Namen wählen.")
+        continue
+      print(f"User '{new_name}' erstellt. 🎬")
+      return user_id, new_name
+
+    print("Ungültige Auswahl. Bitte nochmal.")
+
+
+def list_movies(user_id: int, user_name: str) -> None:
+  """List all movies for the active user."""
+  movies = movie_storage.get_movies(user_id)
+  if not movies:
+    print(f"📢 {user_name}, deine Filmsammlung ist leer. Füge Filme hinzu!")
+    return
+
   print(f"{len(movies)} movies total")
   for title, data in movies.items():
     print(f"{title} ({data['year']}): {data['rating']}")
 
 
-def add_movie() -> None:
-  """Add a new movie using OMDb API (title only)."""
-  movies = movie_storage.get_movies()
+def add_movie(user_id: int) -> None:
+  """Add a movie for the active user (title only; API + fallback)."""
+  movies = movie_storage.get_movies(user_id)
 
   title = ask_non_empty("film name eingeben: ")
   if find_exact_key_case_insensitive(movies, title):
@@ -114,46 +148,48 @@ def add_movie() -> None:
 
   try:
     fetched = movie_api.fetch_movie_from_omdb(title)
+    movie_storage.add_movie(
+      user_id,
+      fetched["title"],
+      fetched["year"],
+      fetched["rating"],
+      fetched["poster"],
+    )
+    print(f"✅ \"{fetched['title']}\" added successfully.")
+    return
+
   except movie_api.MovieNotFoundError:
     print("Film nicht gefunden. Bitte prüfe den Titel.")
     return
+
   except movie_api.ApiConnectionError:
-    print("API ist aktuell nicht erreichbar. Bitte später erneut versuchen.")
+    print("API ist aktuell nicht erreichbar. Manuelle Eingabe wird verwendet.")
+    year = ask_int("erscheinungsjahr: ")
+    rating = ask_float("film rating 1-10: ")
+    poster = ""
+    movie_storage.add_movie(user_id, title, year, rating, poster)
+    print(f"✅ \"{title}\" manuell hinzugefügt.")
     return
 
-  movie_storage.add_movie(
-    fetched["title"],
-    fetched["year"],
-    fetched["rating"],
-    fetched["poster"],
-  )
 
-  print(
-    f"\"{fetched['title']}\" ({fetched['year']}) "
-    f"mit Rating {fetched['rating']} hinzugefügt."
-  )
-
-
-
-
-def delete_movie() -> None:
-  """Delete an existing movie (robust against invalid input)."""
-  movies = movie_storage.get_movies()
-
+def delete_movie(user_id: int) -> None:
+  """Delete a movie for the active user."""
   while True:
+    movies = movie_storage.get_movies(user_id)
+
     title = ask_non_empty("film name: ")
     existing = find_exact_key_case_insensitive(movies, title)
     if existing:
-      movie_storage.delete_movie(existing)
-      print(f'"{existing}" gelöscht.')
+      movie_storage.delete_movie(user_id, existing)
+      print(f"\"{existing}\" gelöscht.")
       return
     print("Film existiert nicht. Bitte nochmal.")
 
 
-def update_movie() -> None:
-  """Update movie rating (robust against invalid input)."""
+def update_movie(user_id: int) -> None:
+  """Update a movie rating for the active user."""
   while True:
-    movies = movie_storage.get_movies()
+    movies = movie_storage.get_movies(user_id)
 
     title = ask_non_empty("filmname: ")
     existing = find_exact_key_case_insensitive(movies, title)
@@ -162,8 +198,8 @@ def update_movie() -> None:
       continue
 
     rating = ask_float("neues rating: ")
-    movie_storage.update_movie(existing, rating)
-    print(f'"{existing}" aktualisiert.')
+    movie_storage.update_movie(user_id, existing, rating)
+    print(f"\"{existing}\" aktualisiert.")
     return
 
 
@@ -186,13 +222,13 @@ def compute_stats(movies: MovieData) -> Optional[dict[str, float | list[str]]]:
   }
 
 
-def stats() -> None:
-  """Display statistics."""
-  movies = movie_storage.get_movies()
+def stats(user_id: int, user_name: str) -> None:
+  """Display statistics for the active user."""
+  movies = movie_storage.get_movies(user_id)
   result = compute_stats(movies)
 
   if not result:
-    print("keine filme in datenbank")
+    print(f"📢 {user_name}, keine filme in deiner datenbank.")
     return
 
   print(f"average rating: {result['avg']:.2f}")
@@ -205,9 +241,9 @@ def stats() -> None:
     print(f"- {title}")
 
 
-def random_movie() -> None:
-  """Print a random movie."""
-  movies = movie_storage.get_movies()
+def random_movie(user_id: int) -> None:
+  """Print a random movie for the active user."""
+  movies = movie_storage.get_movies(user_id)
   if not movies:
     print("keine filme in datenbank")
     return
@@ -217,9 +253,9 @@ def random_movie() -> None:
   print(f"{title} ({data['year']}): {data['rating']}")
 
 
-def search_movie() -> None:
-  """Search for movies by title."""
-  movies = movie_storage.get_movies()
+def search_movie(user_id: int) -> None:
+  """Search for movies by title for the active user."""
+  movies = movie_storage.get_movies(user_id)
 
   query = ask_non_empty("filmname: ")
   normalized_query = normalize(query)
@@ -242,9 +278,9 @@ def search_movie() -> None:
       print(suggestion)
 
 
-def movies_sorted_by_rating() -> None:
-  """List movies sorted by rating."""
-  movies = movie_storage.get_movies()
+def movies_sorted_by_rating(user_id: int) -> None:
+  """List movies sorted by rating for the active user."""
+  movies = movie_storage.get_movies(user_id)
   if not movies:
     print("keine filme in datenbank")
     return
@@ -257,9 +293,9 @@ def movies_sorted_by_rating() -> None:
     print(f"{title} ({data['year']}): {data['rating']}")
 
 
-def rating_histogram() -> None:
-  """Save a histogram of ratings to a file."""
-  movies = movie_storage.get_movies()
+def rating_histogram(user_id: int) -> None:
+  """Save a histogram of ratings to a file for the active user."""
+  movies = movie_storage.get_movies(user_id)
   if not movies:
     print("keine filme in datenbank")
     return
@@ -291,36 +327,43 @@ def rating_histogram() -> None:
 def main() -> None:
   """Run the CLI loop."""
   print_title()
-  valid_choices = {str(i) for i in range(11)}
-
+  valid_choices = {str(i) for i in range(12)}
+  user_id, user_name = select_or_create_user()
 
   while True:
     print_menu()
-    choice = ask_choice("wähle (0-9): ", valid_choices)
+    choice = ask_choice("wähle (0-11): ", valid_choices)
     print()
 
     if choice == "1":
-      list_movies()
+      list_movies(user_id, user_name)
     elif choice == "2":
-      add_movie()
+      add_movie(user_id)
     elif choice == "3":
-      delete_movie()
+      delete_movie(user_id)
     elif choice == "4":
-      update_movie()
+      update_movie(user_id)
     elif choice == "5":
-      stats()
+      stats(user_id, user_name)
     elif choice == "6":
-      random_movie()
+      random_movie(user_id)
     elif choice == "7":
-      search_movie()
+      search_movie(user_id)
     elif choice == "8":
-      movies_sorted_by_rating()
+      movies_sorted_by_rating(user_id)
     elif choice == "9":
-      movies = movie_storage.get_movies()
-      website_generator.generate_website(movies, app_title="Film Datenbank")
+      movies = movie_storage.get_movies(user_id)
+      filename = f"{user_name}.html"
+      website_generator.generate_website(
+        movies,
+        app_title=f"{user_name}'s Movie App",
+        filename=filename,
+      )
       print("Website was generated successfully.")
     elif choice == "10":
-      rating_histogram()
+      user_id, user_name = select_or_create_user()
+    elif choice == "11":
+      rating_histogram(user_id)
     elif choice == "0":
       print("Bye!")
       break
