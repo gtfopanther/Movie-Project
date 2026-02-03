@@ -15,8 +15,8 @@ import random
 import statistics
 from typing import Optional
 
-import movie_storage_sql as movie_storage
-from movie_storage_sql import MovieData
+from storage import movie_storage_sql as movie_storage
+from storage.movie_storage_sql import MovieData
 import movie_api
 import website_generator
 

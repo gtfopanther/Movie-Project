@@ -30,7 +30,7 @@ class MovieRecord(TypedDict):
 
 MovieData = Dict[str, MovieRecord]
 
-DB_URL = "sqlite:///movies.db"
+DB_URL = "sqlite:///data/movies.db"
 engine = create_engine(DB_URL, echo=False, future=True)
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 
-from movie_storage_sql import MovieData
+from storage.movie_storage_sql import MovieData
 
 
 STATIC_DIR = Path("_static")
